@@ -3,20 +3,28 @@ package auth
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider/types"
 )
 
+// CognitoService wraps AWS Cognito client and config
 type CognitoService struct {
 	Client   *cognitoidentityprovider.Client
 	ClientID string
 }
 
+// NewCognitoService initializes a new Cognito client with AWS configuration
 func NewCognitoService(cfg AWSConfig) (*CognitoService, error) {
-	awsCfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(cfg.Region))
+	// Load AWS config with region
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(cfg.Region),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+		return nil, fmt.Errorf("❌ failed to load AWS config: %w", err)
 	}
 
 	client := cognitoidentityprovider.NewFromConfig(awsCfg)
@@ -27,24 +35,37 @@ func NewCognitoService(cfg AWSConfig) (*CognitoService, error) {
 	}, nil
 }
 
+// Signup registers a new user in Cognito User Pool
 func (c *CognitoService) Signup(email, password string) error {
-	_, err := c.Client.SignUp(context.TODO(), &cognitoidentityprovider.SignUpInput{
+	// Always use context with timeout for external calls
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := c.Client.SignUp(ctx, &cognitoidentityprovider.SignUpInput{
 		ClientId: &c.ClientID,
 		Username: &email,
 		Password: &password,
-		UserAttributes: []cognitoidentityprovider.AttributeType{
+		UserAttributes: []types.AttributeType{
 			{
-				Name:  awsString("email"),
+				Name:  aws.String("email"),
 				Value: &email,
 			},
 		},
 	})
-	return err
+
+	if err != nil {
+		return fmt.Errorf("❌ signup failed for %s: %w", email, err)
+	}
+	return nil
 }
 
-func (c *CognitoService) Login(email, password string) (string, string, error) {
-	resp, err := c.Client.InitiateAuth(context.TODO(), &cognitoidentityprovider.InitiateAuthInput{
-		AuthFlow: "USER_PASSWORD_AUTH",
+// Login authenticates the user and returns JWT tokens
+func (c *CognitoService) Login(email, password string) (string, string, string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	resp, err := c.Client.InitiateAuth(ctx, &cognitoidentityprovider.InitiateAuthInput{
+		AuthFlow: types.AuthFlowTypeUserPasswordAuth,
 		AuthParameters: map[string]string{
 			"USERNAME": email,
 			"PASSWORD": password,
@@ -52,11 +73,16 @@ func (c *CognitoService) Login(email, password string) (string, string, error) {
 		ClientId: &c.ClientID,
 	})
 	if err != nil {
-		return "", "", err
+		return "", "", "", fmt.Errorf("❌ login failed for %s: %w", email, err)
 	}
-	return *resp.AuthenticationResult.AccessToken, *resp.AuthenticationResult.IdToken, nil
-}
 
-func awsString(s string) *string {
-	return &s
+	if resp.AuthenticationResult == nil {
+		return "", "", "", fmt.Errorf("⚠️ no authentication result received for %s", email)
+	}
+
+	// Return AccessToken, IdToken, RefreshToken
+	return aws.ToString(resp.AuthenticationResult.AccessToken),
+		aws.ToString(resp.AuthenticationResult.IdToken),
+		aws.ToString(resp.AuthenticationResult.RefreshToken),
+		nil
 }

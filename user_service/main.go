@@ -3,9 +3,9 @@ package main
 import (
 	"log"
 
+	"github.com/Satyaprakash2507/RoadGuard/user_service/auth"
+	"github.com/Satyaprakash2507/RoadGuard/user_service/handlers"
 	"github.com/gin-gonic/gin"
-	"github.com/yourusername/roadguard/user_service/auth"
-	"github.com/yourusername/roadguard/user_service/handlers"
 )
 
 func main() {
